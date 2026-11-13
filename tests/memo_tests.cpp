@@ -53,7 +53,7 @@ private slots:
     void trashUndoAndRedo()
     {
         // The desktop trash only takes files on the home volume, so test there.
-        QTemporaryDir dir(QDir::homePath() + "/.cache/memo-test-XXXXXX");
+        QTemporaryDir dir(homeTemplate());
         QVERIFY(dir.isValid());
         const QString path = dir.filePath("2026-11-12 09-00-00.ogg");
         write(path, "audio");
@@ -173,7 +173,8 @@ private slots:
 
     void trashTakesTheTranscriptAlong()
     {
-        QTemporaryDir dir(QDir::homePath() + "/.cache/memo-test-XXXXXX");
+        QTemporaryDir dir(homeTemplate());
+        QVERIFY(dir.isValid());
         const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
         write(memo, "audio");
         QVERIFY(Backend::writeTranscript(memo, "Hello"));
@@ -250,6 +251,14 @@ private slots:
     }
 
 private:
+    // A fresh account (like CI's) may have no ~/.cache yet.
+    static QString homeTemplate()
+    {
+        const QString cache = QDir::homePath() + "/.cache";
+        QDir().mkpath(cache);
+        return cache + "/memo-test-XXXXXX";
+    }
+
     static QByteArray offlineReady(bool ready)
     {
         const QByteArray r = ready ? "true" : "false";
