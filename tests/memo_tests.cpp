@@ -55,6 +55,7 @@ private slots:
         // The desktop trash only takes files on the home volume, so test there.
         QTemporaryDir dir(homeTemplate());
         QVERIFY(dir.isValid());
+        requireTrash(dir.path());
         const QString path = dir.filePath("2026-11-12 09-00-00.ogg");
         write(path, "audio");
 
@@ -175,6 +176,7 @@ private slots:
     {
         QTemporaryDir dir(homeTemplate());
         QVERIFY(dir.isValid());
+        requireTrash(dir.path());
         const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
         write(memo, "audio");
         QVERIFY(Backend::writeTranscript(memo, "Hello"));
@@ -251,6 +253,20 @@ private slots:
     }
 
 private:
+    // Some containers have no usable desktop trash (Qt can't place the home
+    // volume), so trash behavior can only be tested where the trash works.
+    static void requireTrash(const QString &dir)
+    {
+        const QString probe = dir + "/.trash-probe";
+        write(probe, "x");
+        QString inTrash;
+        if (!QFile::moveToTrash(probe, &inTrash))
+            QSKIP("No desktop trash in this environment");
+        QFile::remove(inTrash);
+        const QFileInfo trashed(inTrash);
+        QFile::remove(trashed.dir().absolutePath() + "/../info/" + trashed.fileName() + ".trashinfo");
+    }
+
     // A fresh account (like CI's) may have no ~/.cache yet.
     static QString homeTemplate()
     {
