@@ -4,7 +4,11 @@
   "Saving…": "Enregistrement…",
   "Space to record": "Espace pour enregistrer",
   "No memos yet": "Aucun mémo pour l’instant",
-  "%n memos": { "one": "%n mémo", "many": "%n mémos", "other": "%n mémos" },
+  "%n memos": {
+    "one": "%n mémo",
+    "many": "%n mémos",
+    "other": "%n mémos"
+  },
   "? for shortcuts": "? pour les raccourcis",
   "Record / stop": "Enregistrer / arrêter",
   "Play / pause": "Lire / pause",
@@ -22,5 +26,7 @@
   "Couldn't save the recording to %1.": "Impossible d’enregistrer dans %1.",
   "Nothing was recorded. Check the microphone.": "Rien n’a été enregistré. Vérifiez le micro.",
   "Couldn't move %1 to the trash.": "Impossible de mettre %1 à la corbeille.",
-  "Couldn't restore %1 from the trash.": "Impossible de restaurer %1 depuis la corbeille."
+  "Couldn't restore %1 from the trash.": "Impossible de restaurer %1 depuis la corbeille.",
+  "Move this memo to the trash?": "Mettre ce mémo à la corbeille ?",
+  "Keep": "Garder"
 }

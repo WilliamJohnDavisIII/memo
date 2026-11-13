@@ -7,7 +7,8 @@ Record voice memos with one key. Press Space to start, Space to stop. That's it.
 Memos land in `~/Music/Memos` as Opus files named after when you started
 talking (`2026-11-12 18-58-03.ogg`), so the folder is the app: sync it, back it
 up, or drop audio files in and they show up. Drag a memo out of the window to
-attach it anywhere. Deleting moves it to the trash, and Ctrl+Z brings it back.
+attach it anywhere. Deleting asks first (Enter or D again to confirm), moves it
+to the trash, and Ctrl+Z brings it back.
 Closing the window mid-memo saves what you have.
 
 Follows the Omarchy theme accent, window rounding, and language, live.

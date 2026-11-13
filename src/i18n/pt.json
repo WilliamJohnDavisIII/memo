@@ -4,7 +4,11 @@
   "Saving…": "Salvando…",
   "Space to record": "Espaço para gravar",
   "No memos yet": "Nenhuma nota de voz ainda",
-  "%n memos": { "one": "%n nota", "many": "%n notas", "other": "%n notas" },
+  "%n memos": {
+    "one": "%n nota",
+    "many": "%n notas",
+    "other": "%n notas"
+  },
   "? for shortcuts": "? para atalhos",
   "Record / stop": "Gravar / parar",
   "Play / pause": "Reproduzir / pausar",
@@ -22,5 +26,7 @@
   "Couldn't save the recording to %1.": "Não foi possível salvar a gravação em %1.",
   "Nothing was recorded. Check the microphone.": "Nada foi gravado. Verifique o microfone.",
   "Couldn't move %1 to the trash.": "Não foi possível mover %1 para a lixeira.",
-  "Couldn't restore %1 from the trash.": "Não foi possível restaurar %1 da lixeira."
+  "Couldn't restore %1 from the trash.": "Não foi possível restaurar %1 da lixeira.",
+  "Move this memo to the trash?": "Mover esta nota de voz para a lixeira?",
+  "Keep": "Manter"
 }

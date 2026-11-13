@@ -4,7 +4,10 @@
   "Saving…": "Speichern…",
   "Space to record": "Leertaste zum Aufnehmen",
   "No memos yet": "Noch keine Memos",
-  "%n memos": { "one": "%n Memo", "other": "%n Memos" },
+  "%n memos": {
+    "one": "%n Memo",
+    "other": "%n Memos"
+  },
   "? for shortcuts": "? für Tastenkürzel",
   "Record / stop": "Aufnehmen / Stopp",
   "Play / pause": "Abspielen / Pause",
@@ -22,5 +25,7 @@
   "Couldn't save the recording to %1.": "Die Aufnahme konnte nicht unter %1 gespeichert werden.",
   "Nothing was recorded. Check the microphone.": "Nichts aufgenommen. Prüfe das Mikrofon.",
   "Couldn't move %1 to the trash.": "%1 konnte nicht in den Papierkorb verschoben werden.",
-  "Couldn't restore %1 from the trash.": "%1 konnte nicht aus dem Papierkorb wiederhergestellt werden."
+  "Couldn't restore %1 from the trash.": "%1 konnte nicht aus dem Papierkorb wiederhergestellt werden.",
+  "Move this memo to the trash?": "Dieses Memo in den Papierkorb verschieben?",
+  "Keep": "Behalten"
 }

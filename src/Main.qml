@@ -20,6 +20,9 @@ ApplicationWindow {
 
     readonly property color dim: "#8a8a8f"
     property bool helpVisible: false
+    // The memo waiting on a yes before it goes to the trash.
+    property var pendingTrash: null
+    readonly property bool confirming: pendingTrash !== null
     property string playingPath: ""
     readonly property var current: list.currentIndex >= 0 && list.currentIndex < backend.memos.length
                                    ? backend.memos[list.currentIndex] : null
@@ -66,11 +69,16 @@ ApplicationWindow {
         if (playingPath !== "")
             player.position = Math.max(0, Math.min(player.duration, player.position + ms))
     }
-    function trashCurrent() {
-        if (!current || backend.recording) return
-        if (playingPath === current.path) stopPlayback()
+    function askTrash() {
+        if (current && !backend.recording) pendingTrash = current
+    }
+    function confirmTrash() {
+        const memo = pendingTrash
+        pendingTrash = null
+        if (!memo) return
+        if (playingPath === memo.path) stopPlayback()
         const index = list.currentIndex
-        backend.remove(current.path)
+        backend.remove(memo.path)
         list.currentIndex = Math.min(index, backend.memos.length - 1)
     }
     function move(step) {
@@ -103,19 +111,21 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: { win.helpVisible = false; backend.toggleRecording() } }
-    Shortcut { sequences: ["Return", "Enter"]; context: Qt.ApplicationShortcut; onActivated: win.togglePlay(win.current) }
-    Shortcut { sequences: ["Down", "J"]; context: Qt.ApplicationShortcut; onActivated: win.move(1) }
-    Shortcut { sequences: ["Up", "K"]; context: Qt.ApplicationShortcut; onActivated: win.move(-1) }
-    Shortcut { sequences: ["Right", "L"]; context: Qt.ApplicationShortcut; onActivated: win.seek(5000) }
-    Shortcut { sequences: ["Left", "H"]; context: Qt.ApplicationShortcut; onActivated: win.seek(-5000) }
-    Shortcut { sequences: ["Delete", "Backspace", "D"]; context: Qt.ApplicationShortcut; onActivated: win.trashCurrent() }
-    Shortcut { sequences: [StandardKey.Undo]; context: Qt.ApplicationShortcut; onActivated: backend.undo() }
-    Shortcut { sequences: ["Ctrl+Shift+Z", StandardKey.Redo]; context: Qt.ApplicationShortcut; onActivated: backend.redo() }
-    Shortcut { sequence: "O"; context: Qt.ApplicationShortcut; onActivated: Qt.openUrlExternally("file://" + encodeURI(backend.directory)) }
-    Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
-    Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: { win.helpVisible = false; backend.clearError() } }
-    Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: win.close() }
+    Shortcut { sequence: "Space"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: { win.helpVisible = false; backend.toggleRecording() } }
+    Shortcut { sequences: ["Return", "Enter"]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.togglePlay(win.current) }
+    Shortcut { sequences: ["Down", "J"]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.move(1) }
+    Shortcut { sequences: ["Up", "K"]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.move(-1) }
+    Shortcut { sequences: ["Right", "L"]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.seek(5000) }
+    Shortcut { sequences: ["Left", "H"]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.seek(-5000) }
+    Shortcut { sequences: ["Delete", "Backspace", "D"]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.askTrash() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: backend.undo() }
+    Shortcut { sequences: ["Ctrl+Shift+Z", StandardKey.Redo]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: backend.redo() }
+    Shortcut { sequence: "O"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: Qt.openUrlExternally("file://" + encodeURI(backend.directory)) }
+    Shortcut { sequence: "?"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
+    Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: { win.pendingTrash = null; win.helpVisible = false; backend.clearError() } }
+    Shortcut { sequences: ["Return", "Enter", "Y", "D", "Delete", "Backspace"]; enabled: win.confirming; context: Qt.ApplicationShortcut; onActivated: win.confirmTrash() }
+    Shortcut { sequence: "N"; enabled: win.confirming; context: Qt.ApplicationShortcut; onActivated: win.pendingTrash = null }
+    Shortcut { sequence: "Q"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.close() }
 
     // Right-to-left languages mirror the window; the Translator sets the
     // application's layout direction.
@@ -338,6 +348,80 @@ ApplicationWindow {
                 text: qsTr("%n memos", "", backend.memos.length) + "   ·   " + qsTr("? for shortcuts")
                 color: Qt.rgba(1, 1, 1, 0.3)
                 font.pixelSize: 12
+            }
+        }
+
+        // Asks before a memo goes to the trash: Enter or D again to confirm,
+        // Escape to keep it.
+        Rectangle {
+            anchors.fill: parent
+            visible: win.confirming
+            color: Qt.rgba(0, 0, 0, 0.75)
+
+            MouseArea { anchors.fill: parent; onClicked: win.pendingTrash = null }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 40, 340)
+                height: confirmColumn.implicitHeight + 48
+                radius: theme.radius
+                color: "#18181b"
+                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                MouseArea { anchors.fill: parent }
+
+                ColumnLayout {
+                    id: confirmColumn
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 6
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Move this memo to the trash?")
+                        color: "white"
+                        font.pixelSize: 16
+                        wrapMode: Text.Wrap
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: win.pendingTrash ? win.dayOf(win.pendingTrash.created) + ", " + win.timeOf(win.pendingTrash.created) : ""
+                        color: win.dim
+                        font.pixelSize: 13
+                        elide: Text.ElideRight
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        spacing: 8
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: qsTr("Keep") + "  (Esc)"
+                            flat: true
+                            focusPolicy: Qt.NoFocus
+                            onClicked: win.pendingTrash = null
+                        }
+                        Button {
+                            text: qsTr("Move to trash") + "  (Enter)"
+                            focusPolicy: Qt.NoFocus
+                            onClicked: win.confirmTrash()
+                            contentItem: Label {
+                                text: parent.text
+                                color: theme.accentForeground
+                                font.pixelSize: 14
+                                font.weight: Font.Medium
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                implicitHeight: 36
+                                radius: Math.min(4, theme.radius)
+                                color: theme.accent
+                                opacity: parent.down ? 0.8 : 1
+                            }
+                        }
+                    }
+                }
             }
         }
 

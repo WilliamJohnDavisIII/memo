@@ -4,7 +4,10 @@
   "Saving…": "Gemmer…",
   "Space to record": "Mellemrum for at optage",
   "No memos yet": "Ingen memoer endnu",
-  "%n memos": { "one": "%n memo", "other": "%n memoer" },
+  "%n memos": {
+    "one": "%n memo",
+    "other": "%n memoer"
+  },
   "? for shortcuts": "? for genveje",
   "Record / stop": "Optag / stop",
   "Play / pause": "Afspil / pause",
@@ -22,5 +25,7 @@
   "Couldn't save the recording to %1.": "Kunne ikke gemme optagelsen i %1.",
   "Nothing was recorded. Check the microphone.": "Intet blev optaget. Tjek mikrofonen.",
   "Couldn't move %1 to the trash.": "Kunne ikke flytte %1 til papirkurven.",
-  "Couldn't restore %1 from the trash.": "Kunne ikke gendanne %1 fra papirkurven."
+  "Couldn't restore %1 from the trash.": "Kunne ikke gendanne %1 fra papirkurven.",
+  "Move this memo to the trash?": "Flyt dette memo til papirkurven?",
+  "Keep": "Behold"
 }
