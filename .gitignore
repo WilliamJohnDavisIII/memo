@@ -2,3 +2,6 @@
 /pkgbuild/pkg/
 /pkgbuild/src/
 *.pkg.tar.*
+/packaging/omarchy-pkgs/pkgbuilds/memo/src/
+/packaging/omarchy-pkgs/pkgbuilds/memo/pkg/
+*.tar.gz

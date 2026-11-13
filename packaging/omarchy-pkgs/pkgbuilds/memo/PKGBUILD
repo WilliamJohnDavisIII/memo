@@ -21,7 +21,7 @@ depends=(
 optdepends=('superwhisper-bin: transcribe memos with T')
 makedepends=('gcc' 'make')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP_UNTIL_RELEASE')
+sha256sums=('e6b4d57dae951b67e1d02097e415d738ad8552a8696f8eed8ed775abd9d1464a')
 
 build() {
   cd "$srcdir/$pkgname-$pkgver"
