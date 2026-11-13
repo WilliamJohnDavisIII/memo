@@ -422,7 +422,9 @@ ApplicationWindow {
 
             Rectangle {
                 anchors.centerIn: parent
-                width: Math.min(parent.width - 40, 340)
+                // Wide enough for both buttons in long languages, never wider
+                // than the window; the buttons wrap below that.
+                width: Math.min(parent.width - 40, Math.max(340, keepButton.implicitWidth + actionButton.implicitWidth + 72))
                 height: confirmColumn.implicitHeight + 48
                 radius: theme.radius
                 color: "#18181b"
@@ -450,18 +452,15 @@ ApplicationWindow {
                         font.pixelSize: 13
                         wrapMode: Text.Wrap
                     }
-                    RowLayout {
+                    // Right to left so the main action sits at the far edge and
+                    // the buttons wrap instead of overflowing in long languages.
+                    Flow {
                         Layout.fillWidth: true
                         Layout.topMargin: 14
                         spacing: 8
-                        Item { Layout.fillWidth: true }
+                        layoutDirection: Qt.RightToLeft
                         Button {
-                            text: (win.pending ? win.pending.keep : "") + "  (Esc)"
-                            flat: true
-                            focusPolicy: Qt.NoFocus
-                            onClicked: win.pending = null
-                        }
-                        Button {
+                            id: actionButton
                             text: (win.pending ? win.pending.action : "") + "  (Enter)"
                             focusPolicy: Qt.NoFocus
                             onClicked: win.confirmPending()
@@ -479,6 +478,13 @@ ApplicationWindow {
                                 color: theme.accent
                                 opacity: parent.down ? 0.8 : 1
                             }
+                        }
+                        Button {
+                            id: keepButton
+                            text: (win.pending ? win.pending.keep : "") + "  (Esc)"
+                            flat: true
+                            focusPolicy: Qt.NoFocus
+                            onClicked: win.pending = null
                         }
                     }
                 }

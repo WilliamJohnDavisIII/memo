@@ -1,0 +1,49 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, test, and package
+    runs-on: ubuntu-latest
+    # The app ships as an Arch package built against Arch's Qt, so it's tested
+    # there. This runner is x86_64; development happens on aarch64.
+    container: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install git for the checkout
+        run: pacman -Syu --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+
+      - name: Install the package's dependencies
+        # The release PKGBUILD is the one list of what the app needs, so CI
+        # reads it rather than keeping a copy.
+        run: |
+          source packaging/omarchy-pkgs/pkgbuilds/memo/PKGBUILD
+          deps=("${depends[@]}" "${makedepends[@]}")
+          pacman -S --noconfirm --needed base-devel "${deps[@]%%[<>=]*}"
+
+      - name: Set up a user and a locale like a desktop's
+        run: |
+          useradd -m tester
+          chown -R tester .
+          sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+          locale-gen
+
+      - name: Build
+        run: su tester -c bin/build
+
+      - name: Test
+        run: su tester -c 'LANG=en_US.UTF-8 bin/test'
+
+      - name: Package
+        run: su tester -c 'cd pkgbuild && makepkg -f --nodeps --noconfirm'

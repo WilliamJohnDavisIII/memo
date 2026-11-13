@@ -23,7 +23,20 @@ Memo says what's missing when Superwhisper isn't installed or its speech model
 isn't downloaded, and in Cloud mode it asks before uploading anything.
 Everything else works without it.
 
-Follows the Omarchy theme accent, window rounding, and language, live.
+Follows the Omarchy theme accent, window rounding, and language, live, in all
+50 of Omarchy's languages.
+
+## Install
+
+On Omarchy (or any Arch system with Qt 6.8+):
+
+```sh
+git clone https://github.com/WilliamJohnDavisIII/memo
+cd memo
+bin/install
+```
+
+Memo then shows up in the app launcher (Super + Space).
 
 ## Shortcuts
 

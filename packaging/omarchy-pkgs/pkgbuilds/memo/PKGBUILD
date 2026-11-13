@@ -1,0 +1,38 @@
+# Maintainer: William John Davis III <58375683+WilliamJohnDavisIII@users.noreply.github.com>
+
+pkgname=memo
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Record voice memos with one key, theme-synced for Omarchy'
+arch=('x86_64' 'aarch64')
+url='https://github.com/WilliamJohnDavisIII/memo'
+license=('MIT')
+install='memo.install'
+options=('!debug')
+depends=(
+  'ffmpeg'
+  'hicolor-icon-theme'
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-multimedia>=6.8'
+  'qt6-multimedia-ffmpeg'
+  'qt6-wayland'
+)
+optdepends=('superwhisper-bin: transcribe memos with T')
+makedepends=('gcc' 'make')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP_UNTIL_RELEASE')
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  ./bin/build
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+
+  install -Dm755 build/memo "$pkgdir/usr/bin/memo"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 pkgbuild/memo.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/memo.svg"
+  install -Dm644 pkgbuild/memo.desktop "$pkgdir/usr/share/applications/memo.desktop"
+}

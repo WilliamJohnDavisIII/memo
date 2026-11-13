@@ -1,0 +1,13 @@
+{
+  "source": "local",
+  "auto_merge": true,
+  "upstream": {
+    "git_tags": "https://github.com/WilliamJohnDavisIII/memo.git",
+    "tag_pattern": "v{pkgver}",
+    "sources": {
+      "any": [
+        "https://github.com/WilliamJohnDavisIII/memo/archive/refs/tags/{tag}.tar.gz"
+      ]
+    }
+  }
+}
