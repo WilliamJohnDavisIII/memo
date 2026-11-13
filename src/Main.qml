@@ -132,7 +132,7 @@ ApplicationWindow {
             // The one button: a dot to record, a square to stop.
             Item {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 210
+                Layout.preferredHeight: 262
 
                 Rectangle {
                     id: halo
@@ -186,9 +186,30 @@ ApplicationWindow {
                     }
                 }
 
-                Label {
+                // The voice, live: newest on the right, a flat line while idle.
+                Row {
+                    id: wave
                     anchors.top: ring.bottom
                     anchors.topMargin: 22
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    height: 44
+                    spacing: 3
+                    Repeater {
+                        model: backend.levels.length
+                        Rectangle {
+                            required property int index
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 3
+                            height: Math.max(3, 44 * backend.levels[index])
+                            radius: Math.min(1.5, theme.radius)
+                            color: backend.recording ? theme.accent : Qt.rgba(1, 1, 1, 0.12)
+                        }
+                    }
+                }
+
+                Label {
+                    anchors.top: wave.bottom
+                    anchors.topMargin: 14
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: backend.saving ? qsTr("Saving…")
                         : backend.recording ? win.clock(backend.elapsed)

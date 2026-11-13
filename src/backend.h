@@ -12,6 +12,8 @@
 #include <QVariantList>
 
 class QAudioInput;
+class QAudioSource;
+class QIODevice;
 class QMediaCaptureSession;
 
 struct Memo {
@@ -28,6 +30,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
     Q_PROPERTY(bool saving READ saving NOTIFY recordingChanged)
     Q_PROPERTY(qint64 elapsed READ elapsed NOTIFY elapsedChanged)
+    Q_PROPERTY(QList<qreal> levels READ levels NOTIFY levelsChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(QVariantList memos READ memos NOTIFY memosChanged)
     Q_PROPERTY(QString directory READ directory CONSTANT)
@@ -41,6 +44,7 @@ public:
     bool recording() const;
     bool saving() const { return m_saving; }
     qint64 elapsed() const { return m_elapsed; }
+    QList<qreal> levels() const { return m_levels; }
     QString error() const { return m_error; }
     QVariantList memos() const;
     QString directory() const { return m_directory; }
@@ -61,10 +65,14 @@ public:
     static QDateTime createdAt(const QFileInfo &file);
     static qint64 probeDuration(const QString &path);
     static int recoverUnfinished(const QString &directory);
+    static qreal levelFor(float peak);
+
+    static constexpr int kBars = 48;
 
 signals:
     void recordingChanged();
     void elapsedChanged();
+    void levelsChanged();
     void errorChanged();
     void memosChanged();
     void historyChanged();
@@ -78,6 +86,9 @@ private:
     void startRecording();
     void stopRecording();
     void finishRecording();
+    void startLevels(const class QAudioDevice &device);
+    void stopLevels();
+    void readLevels();
     bool trash(const QString &path);
     void setError(const QString &error);
     void probeMissing();
@@ -96,6 +107,13 @@ private:
     bool m_saving = false;
     bool m_quitAfterSaving = false;
     QString m_error;
+
+    QAudioSource *m_levelSource = nullptr;
+    QIODevice *m_levelDevice = nullptr;
+    QList<qreal> m_levels = QList<qreal>(kBars, 0.0);
+    float m_peak = 0;
+    int m_samplesInBar = 0;
+    int m_samplesPerBar = 640;
 
     QFileSystemWatcher m_watcher;
     QTimer m_refreshDebounce;

@@ -2,6 +2,7 @@
 
 #include <QAudioDevice>
 #include <QAudioInput>
+#include <QAudioSource>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -14,6 +15,7 @@
 #include <QUrl>
 #include <QtConcurrent>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -258,15 +260,18 @@ void Backend::startRecording() {
     emit elapsedChanged();
     m_active = true;
     m_recorder->record();
+    startLevels(device);
 }
 
 void Backend::stopRecording() {
+    stopLevels();
     m_saving = true;
     emit recordingChanged();
     m_recorder->stop();
 }
 
 void Backend::finishRecording() {
+    stopLevels();
     m_active = false;
     m_saving = false;
     QString written = m_recorder->actualLocation().toLocalFile();
@@ -289,6 +294,69 @@ void Backend::finishRecording() {
     refresh();
     if (m_quitAfterSaving)
         QCoreApplication::quit();
+}
+
+// The waveform listens to the same microphone on its own light stream: 16 kHz
+// mono is plenty to see a voice, and it never touches what gets recorded.
+void Backend::startLevels(const QAudioDevice &device) {
+    stopLevels();
+    QAudioFormat format;
+    format.setSampleRate(16000);
+    format.setChannelCount(1);
+    format.setSampleFormat(QAudioFormat::Float);
+    if (!device.isFormatSupported(format))
+        format = device.preferredFormat();
+
+    m_levelSource = new QAudioSource(device, format, this);
+    m_levelSource->setBufferSize(format.bytesForDuration(100000));
+    m_samplesPerBar = std::max(1, format.sampleRate() * 40 / 1000); // 25 bars a second
+    m_peak = 0;
+    m_samplesInBar = 0;
+    m_levelDevice = m_levelSource->start();
+    if (m_levelDevice)
+        connect(m_levelDevice, &QIODevice::readyRead, this, &Backend::readLevels);
+}
+
+void Backend::stopLevels() {
+    if (m_levelSource) {
+        m_levelSource->stop();
+        m_levelSource->deleteLater();
+        m_levelSource = nullptr;
+        m_levelDevice = nullptr;
+    }
+    m_levels.fill(0.0);
+    emit levelsChanged();
+}
+
+void Backend::readLevels() {
+    if (!m_levelDevice)
+        return;
+    const QByteArray data = m_levelDevice->readAll();
+    const QAudioFormat format = m_levelSource->format();
+    const int frameBytes = format.bytesPerFrame();
+    if (frameBytes <= 0)
+        return;
+
+    bool changed = false;
+    for (qsizetype offset = 0; offset + frameBytes <= data.size(); offset += frameBytes) {
+        m_peak = std::max(m_peak, std::abs(format.normalizedSampleValue(data.constData() + offset)));
+        if (++m_samplesInBar < m_samplesPerBar)
+            continue;
+        m_levels.removeFirst();
+        m_levels.append(levelFor(m_peak));
+        m_peak = 0;
+        m_samplesInBar = 0;
+        changed = true;
+    }
+    if (changed)
+        emit levelsChanged();
+}
+
+// Peaks on a decibel scale, -54 dB to -6 dB, so a normal speaking voice fills
+// the bars and room noise stays near the floor.
+qreal Backend::levelFor(float peak) {
+    const double db = 20.0 * std::log10(std::max(peak, 1e-6f));
+    return std::clamp((db + 54.0) / 48.0, 0.0, 1.0);
 }
 
 // Deleting moves the memo to the desktop trash, so even past undo it can be

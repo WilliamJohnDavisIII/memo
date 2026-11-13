@@ -77,6 +77,24 @@ private slots:
         QVERIFY(backend.error().isEmpty());
     }
 
+    void levelsSitOnADecibelScale()
+    {
+        QCOMPARE(Backend::levelFor(0.0f), 0.0);
+        QCOMPARE(Backend::levelFor(1.0f), 1.0);
+        const qreal speech = Backend::levelFor(0.1f);   // -20 dB
+        const qreal hiss = Backend::levelFor(0.003f);   // about -50 dB
+        QVERIFY(speech > 0.6 && speech < 0.8);
+        QVERIFY(hiss < 0.1);
+    }
+
+    void levelsStartFlat()
+    {
+        QTemporaryDir dir;
+        Backend backend(dir.path());
+        QCOMPARE(backend.levels().size(), Backend::kBars);
+        QCOMPARE(backend.levels().value(0), 0.0);
+    }
+
     void themeFallsBack()
     {
         QTemporaryDir dir;
