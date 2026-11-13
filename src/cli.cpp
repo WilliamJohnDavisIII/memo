@@ -59,7 +59,8 @@ int runCli(const QStringList &arguments) {
             for (const auto &memo : memos)
                 array.append(QJsonObject{{"path", memo.path},
                                          {"created", memo.created.toString(Qt::ISODate)},
-                                         {"duration_ms", memo.duration}});
+                                         {"duration_ms", memo.duration},
+                                         {"transcript", memo.transcript}});
             out << QJsonDocument(array).toJson(QJsonDocument::Indented);
         } else {
             for (const auto &memo : memos)

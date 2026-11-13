@@ -5,6 +5,7 @@
 #include <QtTest>
 
 #include "backend.h"
+#include "transcriber.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -95,6 +96,96 @@ private slots:
         QCOMPARE(backend.levels().value(0), 0.0);
     }
 
+    void transcribeWritesTheTranscriptBeside()
+    {
+        QTemporaryDir dir;
+        const QString fake = fakeSuperwhisper(dir.path(), offlineReady(true),
+                                              R"({"session_id":7,"text":"Pick up milk."})");
+        write(dir.filePath("busy"), "");  // the first submit is turned away, then retried
+        const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
+        write(memo, "audio");
+
+        Backend backend(dir.path(), nullptr, fake);
+        backend.transcriber()->setPollInterval(5);
+        backend.transcribe(memo);
+        QTRY_COMPARE(Backend::readTranscript(memo), QString("Pick up milk."));
+        QTRY_COMPARE(backend.memos().value(0).toMap().value("transcript").toString(), QString("Pick up milk."));
+        QVERIFY(backend.error().isEmpty());
+        QVERIFY(QFileInfo::exists(dir.filePath("2026-11-12 09-00-00.txt")));
+    }
+
+    void missingSuperwhisperSaysSo()
+    {
+        QTemporaryDir dir;
+        const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
+        write(memo, "audio");
+        Backend backend(dir.path(), nullptr, dir.filePath("no-such-superwhisper"));
+        backend.transcribe(memo);
+        QTRY_VERIFY(backend.error().contains("needs Superwhisper"));
+        QVERIFY(!QFileInfo::exists(Backend::transcriptPath(memo)));
+    }
+
+    void missingModelSaysSo()
+    {
+        QTemporaryDir dir;
+        const QString fake = fakeSuperwhisper(dir.path(), offlineReady(false), "{}");
+        const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
+        write(memo, "audio");
+        Backend backend(dir.path(), nullptr, fake);
+        backend.transcribe(memo);
+        QTRY_VERIFY(backend.error().contains("isn't downloaded"));
+        QVERIFY(!QFileInfo::exists(dir.filePath("submitted")));
+    }
+
+    void cloudModeAsksBeforeUploading()
+    {
+        QTemporaryDir dir;
+        const QString fake = fakeSuperwhisper(dir.path(),
+            R"({"processing":"cloud","credentials":{"available":true},"selectionModels":[]})",
+            R"({"session_id":7,"text":"From the cloud."})");
+        const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
+        write(memo, "audio");
+
+        Backend backend(dir.path(), nullptr, fake);
+        backend.transcriber()->setPollInterval(5);
+        QSignalSpy asked(&backend, &Backend::cloudConsentNeeded);
+        backend.transcribe(memo);
+        QTRY_COMPARE(asked.count(), 1);
+        QVERIFY(!QFileInfo::exists(dir.filePath("submitted")));
+
+        backend.transcribe(memo, true);
+        QTRY_COMPARE(Backend::readTranscript(memo), QString("From the cloud."));
+    }
+
+    void silentMemoSaysNoSpeech()
+    {
+        QTemporaryDir dir;
+        const QString fake = fakeSuperwhisper(dir.path(), offlineReady(true),
+                                              R"({"session_id":7,"text":"","warning":"No speech detected"})");
+        const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
+        write(memo, "audio");
+        Backend backend(dir.path(), nullptr, fake);
+        backend.transcriber()->setPollInterval(5);
+        backend.transcribe(memo);
+        QTRY_COMPARE(backend.error(), QString("No speech found in this memo."));
+        QVERIFY(!QFileInfo::exists(Backend::transcriptPath(memo)));
+    }
+
+    void trashTakesTheTranscriptAlong()
+    {
+        QTemporaryDir dir(QDir::homePath() + "/.cache/memo-test-XXXXXX");
+        const QString memo = dir.filePath("2026-11-12 09-00-00.ogg");
+        write(memo, "audio");
+        QVERIFY(Backend::writeTranscript(memo, "Hello"));
+
+        Backend backend(dir.path());
+        QVERIFY(backend.remove(memo));
+        QVERIFY(!QFileInfo::exists(Backend::transcriptPath(memo)));
+        backend.undo();
+        QVERIFY(QFileInfo::exists(memo));
+        QCOMPARE(Backend::readTranscript(memo), QString("Hello"));
+    }
+
     void themeFallsBack()
     {
         QTemporaryDir dir;
@@ -159,6 +250,31 @@ private slots:
     }
 
 private:
+    static QByteArray offlineReady(bool ready)
+    {
+        const QByteArray r = ready ? "true" : "false";
+        return R"({"processing":"offline_lite","selectionModels":[{"id":"transcription","ready":)" + r + "}]}";
+    }
+
+    // Stands in for Superwhisper's CLI: answers from files beside it and
+    // records what was submitted.
+    static QString fakeSuperwhisper(const QString &dir, const QByteArray &models, const QByteArray &read)
+    {
+        write(dir + "/models.json", models);
+        write(dir + "/read.json", read);
+        const QString script = dir + "/superwhisper";
+        write(script, "#!/bin/sh\n"
+                      "D=$(dirname \"$0\")\n"
+                      "case \"$1\" in\n"
+                      "  models) cat \"$D/models.json\" ;;\n"
+                      "  transcribe) if [ -f \"$D/busy\" ]; then rm \"$D/busy\"; echo '{\"error\":\"Not ready: transcribing\"}'; exit 1; fi\n"
+                      "    echo \"$2\" >> \"$D/submitted\"; echo '{\"ok\":true,\"session_id\":7}' ;;\n"
+                      "  read) cat \"$D/read.json\" ;;\n"
+                      "esac\n");
+        QFile::setPermissions(script, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        return script;
+    }
+
     static QStringList keys(const QString &path)
     {
         QFile file(path);

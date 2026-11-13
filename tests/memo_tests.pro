@@ -5,5 +5,5 @@ TEMPLATE = app
 
 INCLUDEPATH += ../src
 
-HEADERS += ../src/backend.h ../src/theme.h ../src/translator.h
-SOURCES += memo_tests.cpp ../src/backend.cpp ../src/theme.cpp ../src/translator.cpp
+HEADERS += ../src/transcriber.h ../src/backend.h ../src/theme.h ../src/translator.h
+SOURCES += memo_tests.cpp ../src/transcriber.cpp ../src/backend.cpp ../src/theme.cpp ../src/translator.cpp

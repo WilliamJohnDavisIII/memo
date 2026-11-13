@@ -20,9 +20,12 @@ ApplicationWindow {
 
     readonly property color dim: "#8a8a8f"
     property bool helpVisible: false
-    // The memo waiting on a yes before it goes to the trash.
-    property var pendingTrash: null
-    readonly property bool confirming: pendingTrash !== null
+    // A question waiting on a yes: { kind, title, detail, keep, action, run }.
+    property var pending: null
+    readonly property bool confirming: pending !== null
+    // Keeps the selection on the same memo when the list changes underneath.
+    property string selectedPath: ""
+    property string notice: ""
     property string playingPath: ""
     readonly property var current: list.currentIndex >= 0 && list.currentIndex < backend.memos.length
                                    ? backend.memos[list.currentIndex] : null
@@ -69,22 +72,44 @@ ApplicationWindow {
         if (playingPath !== "")
             player.position = Math.max(0, Math.min(player.duration, player.position + ms))
     }
+    function describe(memo) { return dayOf(memo.created) + ", " + timeOf(memo.created) }
     function askTrash() {
-        if (current && !backend.recording) pendingTrash = current
+        if (!current || backend.recording) return
+        const memo = current
+        pending = {
+            kind: "trash",
+            title: qsTr("Move this memo to the trash?"),
+            detail: describe(memo) + (memo.transcript ? "\n" + qsTr("Its transcript goes too.") : ""),
+            keep: qsTr("Keep"),
+            action: qsTr("Move to trash"),
+            run: () => {
+                if (playingPath === memo.path) stopPlayback()
+                const index = list.currentIndex
+                backend.remove(memo.path)
+                list.currentIndex = Math.min(index, backend.memos.length - 1)
+            }
+        }
     }
-    function confirmTrash() {
-        const memo = pendingTrash
-        pendingTrash = null
-        if (!memo) return
-        if (playingPath === memo.path) stopPlayback()
-        const index = list.currentIndex
-        backend.remove(memo.path)
-        list.currentIndex = Math.min(index, backend.memos.length - 1)
+    function confirmPending() {
+        const question = pending
+        pending = null
+        if (question) question.run()
+    }
+    function transcribeCurrent() {
+        if (current && !current.transcript && !current.transcribing) backend.transcribe(current.path)
+    }
+    function copyTranscript() {
+        if (!current || !current.transcript) return
+        backend.copyText(current.transcript)
+        notice = qsTr("Transcript copied")
+        noticeTimer.restart()
     }
     function move(step) {
         if (backend.memos.length === 0) return
         list.currentIndex = Math.max(0, Math.min(backend.memos.length - 1, list.currentIndex + step))
     }
+
+    Timer { id: noticeTimer; interval: 1600; onTriggered: win.notice = "" }
 
     MediaPlayer {
         id: player
@@ -97,9 +122,26 @@ ApplicationWindow {
         function onRecordingChanged() {
             if (backend.recording && player.playbackState === MediaPlayer.PlayingState) player.pause()
         }
-        // A new memo lands at the top; select it so Enter plays it back.
         function onMemosChanged() {
-            if (list.currentIndex < 0 && backend.memos.length > 0) list.currentIndex = 0
+            const memos = backend.memos
+            for (let i = 0; i < memos.length; ++i) {
+                if (memos[i].path === win.selectedPath) {
+                    list.currentIndex = i
+                    return
+                }
+            }
+            if (list.currentIndex < 0 && memos.length > 0) list.currentIndex = 0
+        }
+        // Cloud mode uploads the audio, so it asks before sending a memo off.
+        function onCloudConsentNeeded(path) {
+            win.pending = {
+                kind: "upload",
+                title: qsTr("Upload this memo to transcribe it?"),
+                detail: qsTr("Superwhisper is in Cloud mode, so the audio goes to its servers. Switch it to an offline mode to keep memos on this computer."),
+                keep: qsTr("Cancel"),
+                action: qsTr("Upload"),
+                run: () => backend.transcribe(path, true)
+            }
         }
     }
 
@@ -122,9 +164,13 @@ ApplicationWindow {
     Shortcut { sequences: ["Ctrl+Shift+Z", StandardKey.Redo]; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: backend.redo() }
     Shortcut { sequence: "O"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: Qt.openUrlExternally("file://" + encodeURI(backend.directory)) }
     Shortcut { sequence: "?"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
-    Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: { win.pendingTrash = null; win.helpVisible = false; backend.clearError() } }
-    Shortcut { sequences: ["Return", "Enter", "Y", "D", "Delete", "Backspace"]; enabled: win.confirming; context: Qt.ApplicationShortcut; onActivated: win.confirmTrash() }
-    Shortcut { sequence: "N"; enabled: win.confirming; context: Qt.ApplicationShortcut; onActivated: win.pendingTrash = null }
+    Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: { win.pending = null; win.helpVisible = false; backend.clearError() } }
+    Shortcut { sequences: ["Return", "Enter", "Y"]; enabled: win.confirming; context: Qt.ApplicationShortcut; onActivated: win.confirmPending() }
+    // D twice deletes: the same key that asked also confirms.
+    Shortcut { sequences: ["D", "Delete", "Backspace"]; enabled: win.confirming && win.pending.kind === "trash"; context: Qt.ApplicationShortcut; onActivated: win.confirmPending() }
+    Shortcut { sequence: "N"; enabled: win.confirming; context: Qt.ApplicationShortcut; onActivated: win.pending = null }
+    Shortcut { sequence: "T"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.transcribeCurrent() }
+    Shortcut { sequence: "C"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.copyTranscript() }
     Shortcut { sequence: "Q"; enabled: !win.confirming; context: Qt.ApplicationShortcut; onActivated: win.close() }
 
     // Right-to-left languages mirror the window; the Translator sets the
@@ -249,6 +295,8 @@ ApplicationWindow {
                 keyNavigationEnabled: false
                 boundsBehavior: Flickable.StopAtBounds
                 highlightMoveDuration: 0
+                onCurrentIndexChanged: win.selectedPath = currentIndex >= 0 && currentIndex < backend.memos.length
+                                       ? backend.memos[currentIndex].path : ""
                 spacing: 2
                 ScrollBar.vertical: ScrollBar {}
 
@@ -257,7 +305,7 @@ ApplicationWindow {
                     required property var modelData
                     required property int index
                     width: ListView.view.width
-                    height: 58
+                    height: (row.modelData.transcript || row.modelData.transcribing) ? 78 : 58
 
                     readonly property bool selected: ListView.isCurrentItem
                     readonly property bool active: win.playingPath === modelData.path
@@ -313,6 +361,17 @@ ApplicationWindow {
                                 color: win.dim
                                 elide: Text.ElideRight
                             }
+                            Label {
+                                Layout.fillWidth: true
+                                visible: row.modelData.transcript !== "" || row.modelData.transcribing
+                                text: row.modelData.transcribing ? qsTr("Transcribing…")
+                                                                 : row.modelData.transcript.replace(/\s+/g, " ")
+                                font.pixelSize: 13
+                                font.italic: row.modelData.transcribing
+                                color: row.modelData.transcribing ? theme.accent : Qt.rgba(1, 1, 1, 0.7)
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
                         }
 
                         Label {
@@ -345,20 +404,21 @@ ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
-                text: qsTr("%n memos", "", backend.memos.length) + "   ·   " + qsTr("? for shortcuts")
+                text: win.notice !== "" ? win.notice
+                    : qsTr("%n memos", "", backend.memos.length) + "   ·   " + qsTr("? for shortcuts")
                 color: Qt.rgba(1, 1, 1, 0.3)
                 font.pixelSize: 12
             }
         }
 
-        // Asks before a memo goes to the trash: Enter or D again to confirm,
-        // Escape to keep it.
+        // Asks before anything can't be taken back quietly: a memo going to the
+        // trash, or audio leaving the computer. Enter confirms, Escape doesn't.
         Rectangle {
             anchors.fill: parent
             visible: win.confirming
             color: Qt.rgba(0, 0, 0, 0.75)
 
-            MouseArea { anchors.fill: parent; onClicked: win.pendingTrash = null }
+            MouseArea { anchors.fill: parent; onClicked: win.pending = null }
 
             Rectangle {
                 anchors.centerIn: parent
@@ -378,17 +438,17 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: qsTr("Move this memo to the trash?")
+                        text: win.pending ? win.pending.title : ""
                         color: "white"
                         font.pixelSize: 16
                         wrapMode: Text.Wrap
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: win.pendingTrash ? win.dayOf(win.pendingTrash.created) + ", " + win.timeOf(win.pendingTrash.created) : ""
+                        text: win.pending ? win.pending.detail : ""
                         color: win.dim
                         font.pixelSize: 13
-                        elide: Text.ElideRight
+                        wrapMode: Text.Wrap
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -396,15 +456,15 @@ ApplicationWindow {
                         spacing: 8
                         Item { Layout.fillWidth: true }
                         Button {
-                            text: qsTr("Keep") + "  (Esc)"
+                            text: (win.pending ? win.pending.keep : "") + "  (Esc)"
                             flat: true
                             focusPolicy: Qt.NoFocus
-                            onClicked: win.pendingTrash = null
+                            onClicked: win.pending = null
                         }
                         Button {
-                            text: qsTr("Move to trash") + "  (Enter)"
+                            text: (win.pending ? win.pending.action : "") + "  (Enter)"
                             focusPolicy: Qt.NoFocus
-                            onClicked: win.confirmTrash()
+                            onClicked: win.confirmPending()
                             contentItem: Label {
                                 text: parent.text
                                 color: theme.accentForeground
@@ -454,6 +514,8 @@ ApplicationWindow {
                             ["Enter", qsTr("Play / pause")],
                             ["↑ ↓  J K", qsTr("Select")],
                             ["← →  H L", qsTr("Skip 5 seconds")],
+                            ["T", qsTr("Transcribe")],
+                            ["C", qsTr("Copy transcript")],
                             ["D  Del", qsTr("Move to trash")],
                             ["Ctrl+Z", qsTr("Undo")],
                             ["Ctrl+Shift+Z", qsTr("Redo")],

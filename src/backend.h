@@ -11,6 +11,8 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include "transcriber.h"
+
 class QAudioInput;
 class QAudioSource;
 class QIODevice;
@@ -20,6 +22,7 @@ struct Memo {
     QString path;
     QDateTime created;
     qint64 duration = -1;
+    QString transcript;
 };
 
 // Records voice memos into one folder and keeps the list of what's there.
@@ -38,7 +41,8 @@ class Backend : public QObject {
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY historyChanged)
 
 public:
-    explicit Backend(const QString &directory = {}, QObject *parent = nullptr);
+    explicit Backend(const QString &directory = {}, QObject *parent = nullptr,
+                     const QString &superwhisper = "superwhisper");
     ~Backend() override;
 
     bool recording() const;
@@ -58,6 +62,10 @@ public:
     Q_INVOKABLE void redo();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void clearError();
+    Q_INVOKABLE void transcribe(const QString &path, bool allowCloud = false);
+    Q_INVOKABLE void copyText(const QString &text);
+
+    Transcriber *transcriber() { return &m_transcriber; }
 
     static QString defaultDirectory();
     static QList<Memo> scan(const QString &directory);
@@ -66,6 +74,9 @@ public:
     static qint64 probeDuration(const QString &path);
     static int recoverUnfinished(const QString &directory);
     static qreal levelFor(float peak);
+    static QString transcriptPath(const QString &audioPath);
+    static QString readTranscript(const QString &audioPath);
+    static bool writeTranscript(const QString &audioPath, const QString &text);
 
     static constexpr int kBars = 48;
 
@@ -76,11 +87,13 @@ signals:
     void errorChanged();
     void memosChanged();
     void historyChanged();
+    void cloudConsentNeeded(const QString &path);
 
 private:
+    // A memo and its transcript go to the trash, and come back, together.
     struct Trashed {
-        QString original;
-        QString trash;
+        QStringList originals;
+        QStringList trashed;
     };
 
     void startRecording();
@@ -119,6 +132,8 @@ private:
     QTimer m_refreshDebounce;
     QFutureWatcher<QHash<QString, qint64>> m_probe;
     bool m_probeAgain = false;
+
+    Transcriber m_transcriber;
 
     QList<Trashed> m_undo;
     QStringList m_redo;

@@ -11,6 +11,18 @@ attach it anywhere. Deleting asks first (Enter or D again to confirm), moves it
 to the trash, and Ctrl+Z brings it back.
 Closing the window mid-memo saves what you have.
 
+## Transcripts
+
+Press T and [Superwhisper](https://superwhisper.com) turns the memo into text,
+saved beside it with the same name (`2026-11-12 18-58-03.txt`). The folder
+keeps the history: every memo and its words, as plain files any editor or
+`grep` can read. C copies the transcript, and deleting a memo takes its
+transcript to the trash with it.
+
+Memo says what's missing when Superwhisper isn't installed or its speech model
+isn't downloaded, and in Cloud mode it asks before uploading anything.
+Everything else works without it.
+
 Follows the Omarchy theme accent, window rounding, and language, live.
 
 ## Shortcuts
@@ -21,6 +33,8 @@ Follows the Omarchy theme accent, window rounding, and language, live.
 | Enter | Play / pause |
 | ↑ ↓ or J K | Select |
 | ← → or H L | Skip 5 seconds |
+| T | Transcribe |
+| C | Copy transcript |
 | D, Delete, Backspace | Move to trash |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
 | O | Open the memos folder |
@@ -31,7 +45,7 @@ Follows the Omarchy theme accent, window rounding, and language, live.
 
 ```sh
 memo                 # open the recorder
-memo list [--json]   # memos, newest first, with durations
+memo list [--json]   # memos, newest first, with durations and transcripts
 memo dir             # the memos folder
 ```
 

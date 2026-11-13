@@ -3,6 +3,9 @@
 #include <QAudioDevice>
 #include <QAudioInput>
 #include <QAudioSource>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QSaveFile>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -31,8 +34,9 @@ bool isAudio(const QFileInfo &file) {
 
 } // namespace
 
-Backend::Backend(const QString &directory, QObject *parent)
-    : QObject(parent), m_directory(directory.isEmpty() ? defaultDirectory() : directory) {
+Backend::Backend(const QString &directory, QObject *parent, const QString &superwhisper)
+    : QObject(parent), m_directory(directory.isEmpty() ? defaultDirectory() : directory),
+      m_transcriber(superwhisper) {
     if (!QDir().mkpath(m_directory))
         setError(tr("Couldn't create %1.").arg(m_directory));
 
@@ -58,6 +62,21 @@ Backend::Backend(const QString &directory, QObject *parent)
             m_probeAgain = false;
             probeMissing();
         }
+    });
+
+    connect(&m_transcriber, &Transcriber::started, this, &Backend::memosChanged);
+    connect(&m_transcriber, &Transcriber::finished, this, [this](const QString &path, const QString &text) {
+        if (!writeTranscript(path, text))
+            setError(tr("Couldn't save the transcript for %1.").arg(QFileInfo(path).fileName()));
+        refresh();
+    });
+    connect(&m_transcriber, &Transcriber::failed, this, [this](const QString &, const QString &message) {
+        setError(message);
+        emit memosChanged();
+    });
+    connect(&m_transcriber, &Transcriber::cloudConsentNeeded, this, [this](const QString &path) {
+        emit memosChanged();
+        emit cloudConsentNeeded(path);
     });
 
     refresh();
@@ -88,6 +107,8 @@ QVariantList Backend::memos() const {
             {"name", QFileInfo(memo.path).completeBaseName()},
             {"created", memo.created},
             {"duration", memo.duration},
+            {"transcript", memo.transcript},
+            {"transcribing", m_transcriber.isBusy(memo.path)},
         });
     }
     return list;
@@ -106,7 +127,7 @@ QList<Memo> Backend::scan(const QString &directory) {
     for (const auto &entry : entries) {
         if (entry.fileName().startsWith('.') || !isAudio(entry))
             continue;
-        memos.append({entry.absoluteFilePath(), createdAt(entry), -1});
+        memos.append({entry.absoluteFilePath(), createdAt(entry), -1, readTranscript(entry.absoluteFilePath())});
     }
     std::sort(memos.begin(), memos.end(), [](const Memo &a, const Memo &b) {
         return a.created != b.created ? a.created > b.created : a.path > b.path;
@@ -359,16 +380,61 @@ qreal Backend::levelFor(float peak) {
     return std::clamp((db + 54.0) / 48.0, 0.0, 1.0);
 }
 
+// A transcript lives beside its memo with the same name, so the folder alone
+// keeps both, and any editor or grep can read it.
+QString Backend::transcriptPath(const QString &audioPath) {
+    const QFileInfo info(audioPath);
+    return info.absolutePath() + "/" + info.completeBaseName() + ".txt";
+}
+
+QString Backend::readTranscript(const QString &audioPath) {
+    QFile file(transcriptPath(audioPath));
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return QString::fromUtf8(file.readAll()).trimmed();
+}
+
+bool Backend::writeTranscript(const QString &audioPath, const QString &text) {
+    QSaveFile file(transcriptPath(audioPath));
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    file.write(text.trimmed().toUtf8() + "\n");
+    return file.commit();
+}
+
+void Backend::transcribe(const QString &path, bool allowCloud) {
+    if (!QFileInfo::exists(path) || QFileInfo::exists(transcriptPath(path)))
+        return;
+    clearError();
+    m_transcriber.transcribe(path, allowCloud);
+}
+
+void Backend::copyText(const QString &text) {
+    if (auto *clipboard = QGuiApplication::clipboard())
+        clipboard->setText(text);
+}
+
 // Deleting moves the memo to the desktop trash, so even past undo it can be
 // restored from the file manager.
 bool Backend::trash(const QString &path) {
-    QString inTrash;
-    if (!QFile::moveToTrash(path, &inTrash)) {
-        setError(tr("Couldn't move %1 to the trash.").arg(QFileInfo(path).fileName()));
-        return false;
+    QStringList files{path};
+    if (QFileInfo::exists(transcriptPath(path)))
+        files.append(transcriptPath(path));
+
+    Trashed item;
+    for (const auto &file : files) {
+        QString inTrash;
+        if (!QFile::moveToTrash(file, &inTrash)) {
+            setError(tr("Couldn't move %1 to the trash.").arg(QFileInfo(file).fileName()));
+            break;
+        }
+        item.originals.append(file);
+        item.trashed.append(inTrash);
     }
-    m_undo.append({path, inTrash});
-    return true;
+    if (item.originals.isEmpty())
+        return false;
+    m_undo.append(item);
+    return item.originals.size() == files.size();
 }
 
 bool Backend::remove(const QString &path) {
@@ -384,15 +450,18 @@ void Backend::undo() {
     if (m_undo.isEmpty())
         return;
     const Trashed item = m_undo.takeLast();
-    if (QFileInfo::exists(item.original) || !QFile::rename(item.trash, item.original)) {
-        setError(tr("Couldn't restore %1 from the trash.").arg(QFileInfo(item.original).fileName()));
-    } else {
+    for (int i = 0; i < item.originals.size(); ++i) {
+        const QString &original = item.originals[i];
+        if (QFileInfo::exists(original) || !QFile::rename(item.trashed[i], original)) {
+            setError(tr("Couldn't restore %1 from the trash.").arg(QFileInfo(original).fileName()));
+            continue;
+        }
         // The trash keeps a .trashinfo record beside each file; drop it so the
         // trash doesn't list a file that is no longer there.
-        const QFileInfo trashed(item.trash);
+        const QFileInfo trashed(item.trashed[i]);
         QFile::remove(trashed.dir().absolutePath() + "/../info/" + trashed.fileName() + ".trashinfo");
-        m_redo.append(item.original);
     }
+    m_redo.append(item.originals.first());
     emit historyChanged();
     refresh();
 }

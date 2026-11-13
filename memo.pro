@@ -8,6 +8,7 @@ HEADERS += \
     src/backend.h \
     src/cli.h \
     src/theme.h \
+    src/transcriber.h \
     src/translator.h
 
 SOURCES += \
@@ -15,6 +16,7 @@ SOURCES += \
     src/backend.cpp \
     src/cli.cpp \
     src/theme.cpp \
+    src/transcriber.cpp \
     src/translator.cpp
 
 RESOURCES += src/resources.qrc
