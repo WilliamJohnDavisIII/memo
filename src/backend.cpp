@@ -1,0 +1,349 @@
+#include "backend.h"
+
+#include <QAudioDevice>
+#include <QAudioInput>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QMediaCaptureSession>
+#include <QMediaDevices>
+#include <QMediaFormat>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QStandardPaths>
+#include <QUrl>
+#include <QtConcurrent>
+#include <algorithm>
+
+namespace {
+
+// Memos are named after the moment recording started, so the folder sorts by
+// time in any file manager and the name alone says when it was said.
+const QString kNameFormat = "yyyy-MM-dd HH-mm-ss";
+const QString kPartialPrefix = ".recording.";
+
+bool isAudio(const QFileInfo &file) {
+    static const QStringList suffixes{"ogg", "opus", "oga", "m4a", "mp3", "wav", "flac", "aac", "webm"};
+    return suffixes.contains(file.suffix().toLower());
+}
+
+} // namespace
+
+Backend::Backend(const QString &directory, QObject *parent)
+    : QObject(parent), m_directory(directory.isEmpty() ? defaultDirectory() : directory) {
+    if (!QDir().mkpath(m_directory))
+        setError(tr("Couldn't create %1.").arg(m_directory));
+
+    // A crash or power loss mid-recording leaves the partial file behind;
+    // keep it as a memo rather than letting it vanish.
+    recoverUnfinished(m_directory);
+
+    m_refreshDebounce.setSingleShot(true);
+    m_refreshDebounce.setInterval(120);
+    connect(&m_refreshDebounce, &QTimer::timeout, this, &Backend::refresh);
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_refreshDebounce.start(); });
+    if (QFileInfo::exists(m_directory))
+        m_watcher.addPath(m_directory);
+
+    connect(&m_probe, &QFutureWatcher<QHash<QString, qint64>>::finished, this, [this] {
+        const auto found = m_probe.result();
+        for (auto it = found.begin(); it != found.end(); ++it)
+            m_durations.insert(it.key(), it.value());
+        for (auto &memo : m_memos)
+            memo.duration = m_durations.value(memo.path, -1);
+        emit memosChanged();
+        if (m_probeAgain) {
+            m_probeAgain = false;
+            probeMissing();
+        }
+    });
+
+    refresh();
+}
+
+Backend::~Backend() {
+    m_probe.waitForFinished();
+}
+
+QString Backend::defaultDirectory() {
+    QString music = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    if (music.isEmpty())
+        music = QDir::homePath() + "/Music";
+    return music + "/Memos";
+}
+
+bool Backend::recording() const {
+    return m_recorder && m_recorder->recorderState() == QMediaRecorder::RecordingState;
+}
+
+QVariantList Backend::memos() const {
+    QVariantList list;
+    list.reserve(m_memos.size());
+    for (const auto &memo : m_memos) {
+        list.append(QVariantMap{
+            {"path", memo.path},
+            {"url", QUrl::fromLocalFile(memo.path)},
+            {"name", QFileInfo(memo.path).completeBaseName()},
+            {"created", memo.created},
+            {"duration", memo.duration},
+        });
+    }
+    return list;
+}
+
+QDateTime Backend::createdAt(const QFileInfo &file) {
+    // "2026-11-12 18-58-03 (2)" still parses: the counter only breaks ties.
+    const QString base = file.completeBaseName().left(kNameFormat.size());
+    const QDateTime parsed = QDateTime::fromString(base, kNameFormat);
+    return parsed.isValid() ? parsed : file.lastModified();
+}
+
+QList<Memo> Backend::scan(const QString &directory) {
+    QList<Memo> memos;
+    const auto entries = QDir(directory).entryInfoList(QDir::Files | QDir::Readable);
+    for (const auto &entry : entries) {
+        if (entry.fileName().startsWith('.') || !isAudio(entry))
+            continue;
+        memos.append({entry.absoluteFilePath(), createdAt(entry), -1});
+    }
+    std::sort(memos.begin(), memos.end(), [](const Memo &a, const Memo &b) {
+        return a.created != b.created ? a.created > b.created : a.path > b.path;
+    });
+    return memos;
+}
+
+QString Backend::nextPath(const QString &directory, const QDateTime &when, const QString &suffix) {
+    const QString base = directory + "/" + when.toString(kNameFormat);
+    QString path = base + "." + suffix;
+    for (int n = 2; QFileInfo::exists(path); ++n)
+        path = QString("%1 (%2).%3").arg(base).arg(n).arg(suffix);
+    return path;
+}
+
+int Backend::recoverUnfinished(const QString &directory) {
+    int recovered = 0;
+    const auto entries = QDir(directory).entryInfoList({kPartialPrefix + "*"}, QDir::Files | QDir::Hidden);
+    for (const auto &entry : entries) {
+        if (entry.size() == 0) {
+            QFile::remove(entry.absoluteFilePath());
+            continue;
+        }
+        if (QFile::rename(entry.absoluteFilePath(), nextPath(directory, entry.lastModified(), entry.suffix())))
+            ++recovered;
+    }
+    return recovered;
+}
+
+qint64 Backend::probeDuration(const QString &path) {
+    QProcess ffprobe;
+    ffprobe.start("ffprobe", {"-v", "error", "-show_entries", "format=duration",
+                              "-of", "default=noprint_wrappers=1:nokey=1", path});
+    if (!ffprobe.waitForFinished(5000) || ffprobe.exitCode() != 0)
+        return -1;
+    bool ok = false;
+    const double seconds = QString::fromUtf8(ffprobe.readAllStandardOutput()).trimmed().toDouble(&ok);
+    return ok ? qint64(seconds * 1000) : -1;
+}
+
+void Backend::refresh() {
+    if (m_watcher.directories().isEmpty() && QFileInfo::exists(m_directory))
+        m_watcher.addPath(m_directory);
+
+    m_memos = scan(m_directory);
+    for (auto &memo : m_memos)
+        memo.duration = m_durations.value(memo.path, -1);
+    emit memosChanged();
+    probeMissing();
+}
+
+// Durations come from ffprobe off the UI thread; the list shows right away
+// and fills them in when they arrive.
+void Backend::probeMissing() {
+    if (m_probe.isRunning()) {
+        m_probeAgain = true;
+        return;
+    }
+    QStringList missing;
+    for (const auto &memo : m_memos)
+        if (!m_durations.contains(memo.path))
+            missing.append(memo.path);
+    if (missing.isEmpty())
+        return;
+    m_probe.setFuture(QtConcurrent::run([missing] {
+        QHash<QString, qint64> found;
+        for (const auto &path : missing)
+            found.insert(path, probeDuration(path));
+        return found;
+    }));
+}
+
+void Backend::toggleRecording() {
+    if (m_saving)
+        return;
+    if (recording())
+        stopRecording();
+    else
+        startRecording();
+}
+
+void Backend::stopThenQuit() {
+    if (recording() || m_saving) {
+        m_quitAfterSaving = true;
+        if (recording())
+            stopRecording();
+    } else {
+        QCoreApplication::quit();
+    }
+}
+
+void Backend::startRecording() {
+    clearError();
+    const QAudioDevice device = QMediaDevices::defaultAudioInput();
+    if (device.isNull()) {
+        setError(tr("No microphone found."));
+        return;
+    }
+    if (!QDir().mkpath(m_directory)) {
+        setError(tr("Couldn't create %1.").arg(m_directory));
+        return;
+    }
+
+    if (!m_recorder) {
+        m_session = new QMediaCaptureSession(this);
+        m_input = new QAudioInput(this);
+        m_recorder = new QMediaRecorder(this);
+        m_session->setAudioInput(m_input);
+        m_session->setRecorder(m_recorder);
+
+        connect(m_recorder, &QMediaRecorder::recorderStateChanged, this, [this](QMediaRecorder::RecorderState state) {
+            if (state == QMediaRecorder::StoppedState && m_active)
+                finishRecording();
+            emit recordingChanged();
+        });
+        connect(m_recorder, &QMediaRecorder::durationChanged, this, [this](qint64 duration) {
+            m_elapsed = duration;
+            emit elapsedChanged();
+        });
+        connect(m_recorder, &QMediaRecorder::errorOccurred, this, [this](QMediaRecorder::Error, const QString &message) {
+            setError(tr("Recording failed: %1").arg(message));
+        });
+    }
+
+    // Follow whatever the desktop's default microphone is right now.
+    m_input->setDevice(device);
+
+    // Opus in Ogg is small and clear for speech; AAC is the fallback when the
+    // multimedia backend can't encode Opus.
+    QMediaFormat format(QMediaFormat::Ogg);
+    format.setAudioCodec(QMediaFormat::AudioCodec::Opus);
+    QString suffix = "ogg";
+    if (!format.isSupported(QMediaFormat::Encode)) {
+        format = QMediaFormat(QMediaFormat::Mpeg4Audio);
+        format.setAudioCodec(QMediaFormat::AudioCodec::AAC);
+        suffix = "m4a";
+    }
+    m_recorder->setMediaFormat(format);
+    // Mono at 48 kbps is clear for a voice and keeps an hour under 25 MB.
+    m_recorder->setEncodingMode(QMediaRecorder::AverageBitRateEncoding);
+    m_recorder->setAudioChannelCount(1);
+    m_recorder->setAudioBitRate(48000);
+
+    // Record beside the final file under a hidden name, then rename once the
+    // file is complete, so a half-written memo never shows up in the list.
+    m_partial = m_directory + "/" + kPartialPrefix + suffix;
+    QFile::remove(m_partial);
+    m_recorder->setOutputLocation(QUrl::fromLocalFile(m_partial));
+    m_startedAt = QDateTime::currentDateTime();
+    m_elapsed = 0;
+    emit elapsedChanged();
+    m_active = true;
+    m_recorder->record();
+}
+
+void Backend::stopRecording() {
+    m_saving = true;
+    emit recordingChanged();
+    m_recorder->stop();
+}
+
+void Backend::finishRecording() {
+    m_active = false;
+    m_saving = false;
+    QString written = m_recorder->actualLocation().toLocalFile();
+    if (written.isEmpty())
+        written = m_partial;
+
+    if (QFileInfo(written).size() > 0) {
+        const QString path = nextPath(m_directory, m_startedAt, QFileInfo(written).suffix());
+        if (QFile::rename(written, path))
+            m_durations.insert(path, m_elapsed);
+        else
+            setError(tr("Couldn't save the recording to %1.").arg(path));
+    } else if (m_error.isEmpty()) {
+        QFile::remove(written);
+        setError(tr("Nothing was recorded. Check the microphone."));
+    }
+
+    m_elapsed = 0;
+    emit elapsedChanged();
+    refresh();
+    if (m_quitAfterSaving)
+        QCoreApplication::quit();
+}
+
+// Deleting moves the memo to the desktop trash, so even past undo it can be
+// restored from the file manager.
+bool Backend::trash(const QString &path) {
+    QString inTrash;
+    if (!QFile::moveToTrash(path, &inTrash)) {
+        setError(tr("Couldn't move %1 to the trash.").arg(QFileInfo(path).fileName()));
+        return false;
+    }
+    m_undo.append({path, inTrash});
+    return true;
+}
+
+bool Backend::remove(const QString &path) {
+    if (!trash(path))
+        return false;
+    m_redo.clear();
+    emit historyChanged();
+    refresh();
+    return true;
+}
+
+void Backend::undo() {
+    if (m_undo.isEmpty())
+        return;
+    const Trashed item = m_undo.takeLast();
+    if (QFileInfo::exists(item.original) || !QFile::rename(item.trash, item.original)) {
+        setError(tr("Couldn't restore %1 from the trash.").arg(QFileInfo(item.original).fileName()));
+    } else {
+        // The trash keeps a .trashinfo record beside each file; drop it so the
+        // trash doesn't list a file that is no longer there.
+        const QFileInfo trashed(item.trash);
+        QFile::remove(trashed.dir().absolutePath() + "/../info/" + trashed.fileName() + ".trashinfo");
+        m_redo.append(item.original);
+    }
+    emit historyChanged();
+    refresh();
+}
+
+void Backend::redo() {
+    if (m_redo.isEmpty())
+        return;
+    trash(m_redo.takeLast());
+    emit historyChanged();
+    refresh();
+}
+
+void Backend::setError(const QString &error) {
+    if (error == m_error)
+        return;
+    m_error = error;
+    emit errorChanged();
+}
+
+void Backend::clearError() {
+    setError({});
+}

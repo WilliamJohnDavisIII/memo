@@ -1,0 +1,381 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Controls.Material
+import QtQuick.Layouts
+import QtMultimedia
+
+ApplicationWindow {
+    id: win
+    width: 480
+    height: 640
+    minimumWidth: 360
+    minimumHeight: 440
+    visible: true
+    title: "Memo"
+    color: "#0e0e10"
+
+    Material.theme: Material.Dark
+    Material.accent: theme.accent
+    Material.roundedScale: theme.radius
+
+    readonly property color dim: "#8a8a8f"
+    property bool helpVisible: false
+    property string playingPath: ""
+    readonly property var current: list.currentIndex >= 0 && list.currentIndex < backend.memos.length
+                                   ? backend.memos[list.currentIndex] : null
+
+    function num(n) { return Number(n).toLocaleString(Qt.locale(), 'f', 0) }
+    function clock(ms) {
+        const s = Math.max(0, Math.floor(ms / 1000))
+        const sec = s % 60
+        return num(Math.floor(s / 60)) + ":" + (sec < 10 ? num(0) : "") + num(sec)
+    }
+    function sameDay(a, b) {
+        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+    }
+    function dayOf(date) {
+        // Reading translator.language re-renders dates when the language changes.
+        translator.language
+        const today = new Date()
+        const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
+        if (sameDay(date, today)) return qsTr("Today")
+        if (sameDay(date, yesterday)) return qsTr("Yesterday")
+        return date.toLocaleDateString(Qt.locale(), Locale.LongFormat)
+    }
+    function timeOf(date) {
+        translator.language
+        return date.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
+    }
+
+    function togglePlay(memo) {
+        if (!memo || backend.recording) return
+        if (playingPath === memo.path) {
+            player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play()
+            return
+        }
+        playingPath = memo.path
+        player.source = memo.url
+        player.play()
+    }
+    function stopPlayback() {
+        player.stop()
+        player.source = ""
+        playingPath = ""
+    }
+    function seek(ms) {
+        if (playingPath !== "")
+            player.position = Math.max(0, Math.min(player.duration, player.position + ms))
+    }
+    function trashCurrent() {
+        if (!current || backend.recording) return
+        if (playingPath === current.path) stopPlayback()
+        const index = list.currentIndex
+        backend.remove(current.path)
+        list.currentIndex = Math.min(index, backend.memos.length - 1)
+    }
+    function move(step) {
+        if (backend.memos.length === 0) return
+        list.currentIndex = Math.max(0, Math.min(backend.memos.length - 1, list.currentIndex + step))
+    }
+
+    MediaPlayer {
+        id: player
+        audioOutput: AudioOutput {}
+        onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) win.playingPath = ""
+    }
+
+    Connections {
+        target: backend
+        function onRecordingChanged() {
+            if (backend.recording && player.playbackState === MediaPlayer.PlayingState) player.pause()
+        }
+        // A new memo lands at the top; select it so Enter plays it back.
+        function onMemosChanged() {
+            if (list.currentIndex < 0 && backend.memos.length > 0) list.currentIndex = 0
+        }
+    }
+
+    // Recording is never thrown away: closing mid-memo saves it, then quits.
+    onClosing: (close) => {
+        if (backend.recording || backend.saving) {
+            close.accepted = false
+            backend.stopThenQuit()
+        }
+    }
+
+    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: { win.helpVisible = false; backend.toggleRecording() } }
+    Shortcut { sequences: ["Return", "Enter"]; context: Qt.ApplicationShortcut; onActivated: win.togglePlay(win.current) }
+    Shortcut { sequences: ["Down", "J"]; context: Qt.ApplicationShortcut; onActivated: win.move(1) }
+    Shortcut { sequences: ["Up", "K"]; context: Qt.ApplicationShortcut; onActivated: win.move(-1) }
+    Shortcut { sequences: ["Right", "L"]; context: Qt.ApplicationShortcut; onActivated: win.seek(5000) }
+    Shortcut { sequences: ["Left", "H"]; context: Qt.ApplicationShortcut; onActivated: win.seek(-5000) }
+    Shortcut { sequences: ["Delete", "Backspace", "D"]; context: Qt.ApplicationShortcut; onActivated: win.trashCurrent() }
+    Shortcut { sequences: [StandardKey.Undo]; context: Qt.ApplicationShortcut; onActivated: backend.undo() }
+    Shortcut { sequences: ["Ctrl+Shift+Z", StandardKey.Redo]; context: Qt.ApplicationShortcut; onActivated: backend.redo() }
+    Shortcut { sequence: "O"; context: Qt.ApplicationShortcut; onActivated: Qt.openUrlExternally("file://" + encodeURI(backend.directory)) }
+    Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
+    Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: { win.helpVisible = false; backend.clearError() } }
+    Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: win.close() }
+
+    // Right-to-left languages mirror the window; the Translator sets the
+    // application's layout direction.
+    Item {
+        anchors.fill: parent
+        LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
+        LayoutMirroring.childrenInherit: true
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 16
+
+            // The one button: a dot to record, a square to stop.
+            Item {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 210
+
+                Rectangle {
+                    id: halo
+                    anchors.centerIn: ring
+                    width: ring.width
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: 2
+                    border.color: theme.accent
+                    opacity: 0
+                    visible: backend.recording
+
+                    ParallelAnimation {
+                        running: backend.recording
+                        loops: Animation.Infinite
+                        NumberAnimation { target: halo; property: "width"; from: ring.width; to: ring.width + 44; duration: 1400; easing.type: Easing.OutCubic }
+                        NumberAnimation { target: halo; property: "opacity"; from: 0.7; to: 0; duration: 1400; easing.type: Easing.OutCubic }
+                    }
+                }
+
+                Rectangle {
+                    id: ring
+                    width: 128
+                    height: width
+                    radius: width / 2
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+                    anchors.topMargin: 20
+                    color: ringMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
+                    border.width: 3
+                    border.color: theme.accent
+                    opacity: backend.saving ? 0.5 : 1
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: backend.recording || backend.saving ? 44 : 96
+                        height: width
+                        radius: backend.recording || backend.saving ? Math.min(4, theme.radius) : width / 2
+                        color: theme.accent
+                        Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                        Behavior on radius { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    }
+
+                    MouseArea {
+                        id: ringMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: backend.toggleRecording()
+                    }
+                }
+
+                Label {
+                    anchors.top: ring.bottom
+                    anchors.topMargin: 22
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: backend.saving ? qsTr("Saving…")
+                        : backend.recording ? win.clock(backend.elapsed)
+                        : qsTr("Space to record")
+                    font.pixelSize: backend.recording ? 30 : 15
+                    font.weight: backend.recording ? Font.Light : Font.Normal
+                    color: backend.recording ? "white" : win.dim
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: backend.error !== ""
+                text: backend.error
+                color: "#ff6b6b"
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            ListView {
+                id: list
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: backend.memos
+                currentIndex: backend.memos.length > 0 ? 0 : -1
+                keyNavigationEnabled: false
+                boundsBehavior: Flickable.StopAtBounds
+                highlightMoveDuration: 0
+                spacing: 2
+                ScrollBar.vertical: ScrollBar {}
+
+                delegate: Item {
+                    id: row
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    height: 58
+
+                    readonly property bool selected: ListView.isCurrentItem
+                    readonly property bool active: win.playingPath === modelData.path
+
+                    // Drag a memo straight into a chat, an email, or a file manager.
+                    Drag.active: dragHandler.active
+                    Drag.dragType: Drag.Automatic
+                    Drag.supportedActions: Qt.CopyAction
+                    Drag.mimeData: { "text/uri-list": row.modelData.url.toString() }
+                    DragHandler { id: dragHandler; target: null }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Math.min(8, theme.radius)
+                        color: row.selected ? Qt.rgba(1, 1, 1, 0.07)
+                             : rowMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.035) : "transparent"
+                    }
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        height: 2
+                        width: player.duration > 0 ? parent.width * player.position / player.duration : 0
+                        visible: row.active
+                        color: theme.accent
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        spacing: 14
+
+                        PlayGlyph {
+                            playing: row.active && player.playbackState === MediaPlayer.PlayingState
+                            color: row.selected || row.active ? theme.accent : win.dim
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+                            Label {
+                                Layout.fillWidth: true
+                                text: win.dayOf(row.modelData.created)
+                                font.pixelSize: 15
+                                color: "white"
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: win.timeOf(row.modelData.created)
+                                font.pixelSize: 12
+                                color: win.dim
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Label {
+                            text: row.active ? win.clock(player.position) + " / " + win.clock(player.duration)
+                                : row.modelData.duration >= 0 ? win.clock(row.modelData.duration) : ""
+                            font.pixelSize: 13
+                            font.features: { "tnum": 1 }
+                            color: row.active ? "white" : win.dim
+                        }
+                    }
+
+                    MouseArea {
+                        id: rowMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: list.currentIndex = row.index
+                        onDoubleClicked: win.togglePlay(row.modelData)
+                    }
+                }
+
+                Label {
+                    anchors.centerIn: parent
+                    visible: list.count === 0
+                    text: qsTr("No memos yet")
+                    color: win.dim
+                    font.pixelSize: 15
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: qsTr("%n memos", "", backend.memos.length) + "   ·   " + qsTr("? for shortcuts")
+                color: Qt.rgba(1, 1, 1, 0.3)
+                font.pixelSize: 12
+            }
+        }
+
+        // Every shortcut, toggled with ?.
+        Rectangle {
+            anchors.fill: parent
+            visible: win.helpVisible
+            color: Qt.rgba(0, 0, 0, 0.75)
+
+            MouseArea { anchors.fill: parent; onClicked: win.helpVisible = false }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 40, helpGrid.implicitWidth + 56)
+                height: helpGrid.implicitHeight + 56
+                radius: theme.radius
+                color: "#18181b"
+                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                GridLayout {
+                    id: helpGrid
+                    anchors.centerIn: parent
+                    columns: 2
+                    columnSpacing: 28
+                    rowSpacing: 10
+
+                    Repeater {
+                        model: [
+                            ["Space", qsTr("Record / stop")],
+                            ["Enter", qsTr("Play / pause")],
+                            ["↑ ↓  J K", qsTr("Select")],
+                            ["← →  H L", qsTr("Skip 5 seconds")],
+                            ["D  Del", qsTr("Move to trash")],
+                            ["Ctrl+Z", qsTr("Undo")],
+                            ["Ctrl+Shift+Z", qsTr("Redo")],
+                            ["O", qsTr("Open folder")],
+                            ["?", qsTr("Shortcuts")],
+                            ["Q", qsTr("Quit")]
+                        ]
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.columnSpan: 2
+                            spacing: 28
+                            Label {
+                                Layout.preferredWidth: 110
+                                text: modelData[0]
+                                color: theme.accent
+                                font.family: "monospace"
+                                font.pixelSize: 13
+                            }
+                            Label {
+                                text: modelData[1]
+                                color: "white"
+                                font.pixelSize: 14
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

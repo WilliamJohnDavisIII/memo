@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Memo
+Comment=Record voice memos with one key
+Comment[da]=Optag stemmememoer med én tast
+Comment[de]=Sprachmemos mit einer Taste aufnehmen
+Comment[es_MX]=Graba notas de voz con una tecla
+Comment[fr]=Enregistrer des mémos vocaux d’une touche
+Comment[pt_BR]=Grave notas de voz com uma tecla
+Exec=memo
+Icon=memo
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;
+Keywords=voice;memo;record;audio;microphone;dictaphone;
+StartupWMClass=memo
